@@ -1,9 +1,9 @@
 LDFLAGS = -libverbs -lboost_program_options
 
-all: main
+all:server 
 
-main: main.cc
-	$(CXX) $^ -o $@ $(LDFLAGS)
+server: server.cc
+	$(CXX) $^ -o server.exe $(LDFLAGS)
 
 clean:
-	rm main
+	rm server 

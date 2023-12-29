@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug Server",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/server",
+        "args": [],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ],
+        "preLaunchTask": "build and run",
+        "miDebuggerPath": "/path/to/your/gdb"  // Update this with the path to your gdb executable
+      }
+    ]
+  }
+  

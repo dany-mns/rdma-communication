@@ -75,13 +75,13 @@ int send_data(const struct device_info &data, string ip)
 
 int main(int argc, char *argv[])
 {
+	cout << "START" << endl;
 	bool server = false;
 	int num_devices, ret;
 	uint32_t gidIndex = 0;
 	string ip_str, remote_ip_str, dev_str;
 	char data_send[100], data_write[100];
 
-	struct ibv_device **dev_list;
 	struct ibv_context *context;
 	struct ibv_pd *pd;
 	struct ibv_cq *send_cq, *write_cq;
@@ -139,7 +139,7 @@ int main(int argc, char *argv[])
 		server = true;
 
 	// populate dev_list using ibv_get_device_list - use num_devices as argument
-	dev_list = ibv_get_device_list(&num_devices);
+	struct ibv_device** dev_list = ibv_get_device_list(&num_devices);
 	if (!dev_list)
 	{
 		cerr << "ibv_get_device_list failed: " << strerror(errno) << endl;
