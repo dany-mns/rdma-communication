@@ -6,7 +6,12 @@
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/server",
-        "args": [],
+        "args": [
+            "--src_ip 192.168.1.105",
+            "--dst_ip 192.168.1.4",
+            "--server true",
+            "--dev wlp0s20f3rxe"
+        ],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
         "environment": [],
@@ -19,8 +24,8 @@
             "ignoreFailures": true
           }
         ],
-        "preLaunchTask": "build and run",
-        "miDebuggerPath": "/path/to/your/gdb"  // Update this with the path to your gdb executable
+        "preLaunchTask": "build server",
+        "miDebuggerPath": "/usr/bin/gdb"
       }
     ]
   }

@@ -3,7 +3,7 @@ LDFLAGS = -libverbs -lboost_program_options
 all:server 
 
 server: server.cc
-	$(CXX) $^ -o server.exe $(LDFLAGS)
+	$(CXX) $^ -g -o server $(LDFLAGS)
 
 clean:
 	rm server 

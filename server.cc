@@ -75,7 +75,6 @@ int send_data(const struct device_info &data, string ip)
 
 int main(int argc, char *argv[])
 {
-	cout << "START" << endl;
 	bool server = false;
 	int num_devices, ret;
 	uint32_t gidIndex = 0;
