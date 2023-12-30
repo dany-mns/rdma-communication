@@ -33,6 +33,8 @@ int receive_data(struct device_info &data)
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY); 
 	servaddr.sin_port = htons(8080); 
 
+	cout << "Start receive data for ip: " << servaddr.sin_addr.s_addr << endl;
+
 	if ((bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr))) != 0)
 		return 1;
 
@@ -44,8 +46,9 @@ int receive_data(struct device_info &data)
 		return 1;
 
 	read(connfd, &data, sizeof(data));
-
 	close(sockfd);
+
+	cout << "Done receive data: send_qp_num: " << data.send_qp_num << ", write_qp_num " << data.write_qp_num << endl;
 
 	return 0;
 }
@@ -63,12 +66,14 @@ int send_data(const struct device_info &data, string ip)
 	servaddr.sin_addr.s_addr = inet_addr(ip.c_str());
 	servaddr.sin_port = htons(8080);
 
+	cout << "Start sending data to ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << " and write_qp_num: " << data.write_qp_num << endl;
 	if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
 		return 1;
 
 	write(sockfd, &data, sizeof(data));
-
 	close(sockfd);
+	
+	cout << "Done sending data" << endl;
 
 	return 0;
 }
@@ -78,11 +83,9 @@ int main(int argc, char *argv[])
 	bool server = false;
 	int num_devices, ret;
 	uint32_t gidIndex = 0;
-	string ip_str, remote_ip_str, dev_str;
+	string ip_str, remote_ip_str;
 	char data_send[100], data_write[100];
 
-	struct ibv_context *context;
-	struct ibv_pd *pd;
 	struct ibv_cq *send_cq, *write_cq;
 	struct ibv_qp_init_attr qp_init_attr;
 	struct ibv_qp *send_qp, *write_qp;
@@ -103,7 +106,6 @@ int main(int argc, char *argv[])
 	boost::program_options::options_description desc("Allowed options");
 	desc.add_options()
 		("help", "show possible options")
-		("dev", boost::program_options::value<string>(), "rdma device to use")
 		("src_ip", boost::program_options::value<string>(), "source ip")
 		("dst_ip", boost::program_options::value<string>(), "destination ip")
 		("server", "run as server")
@@ -118,11 +120,6 @@ int main(int argc, char *argv[])
 		cout << desc << endl;
 		return 0;
 	}
-
-	if (vm.count("dev"))
-		dev_str = vm["dev"].as<string>();
-	else
-		cerr << "the --dev argument is required" << endl;
 
 	if (vm.count("src_ip"))
 		ip_str = vm["src_ip"].as<string>();
@@ -139,33 +136,16 @@ int main(int argc, char *argv[])
 
 	// populate dev_list using ibv_get_device_list - use num_devices as argument
 	struct ibv_device** dev_list = ibv_get_device_list(&num_devices);
-	if (!dev_list)
+	cout << "Found " << num_devices << " device(s)" << endl;
+	if (!dev_list || num_devices != 1)
 	{
-		cerr << "ibv_get_device_list failed: " << strerror(errno) << endl;
+		cerr << "ibv_get_device_list failed or number of devices != 1" << strerror(errno) << endl;
 		return 1;
 	}
-
-	for (int i = 0; i < num_devices; i++)
-	{
-		// get the device name, using ibv_get_device_name
-		auto dev = ibv_get_device_name(dev_list[i]);
-		if (!dev)
-		{
-			cerr << "ibv_get_device_name failed: " << strerror(errno) << endl;
-			goto free_devlist;
-		}
-
-		// compare it to the device provided in the program arguments (dev_str)
-		// and open the device; store the device context in "context"
-		if (strcmp(dev, dev_str.c_str()) == 0)
-		{
-			context = ibv_open_device(dev_list[i]);
-			break;
-		}
-	}
-
-	// allocate a PD (protection domain), using ibv_alloc_pd
-	pd = ibv_alloc_pd(context);
+	cout << "Interface to use: " << dev_list[0]->name << " more info found at: " << dev_list[0]->ibdev_path << endl;
+	struct ibv_context *context = ibv_open_device(dev_list[0]);
+	struct ibv_pd *pd = ibv_alloc_pd(context);
+	int qp_attrs_flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
 	if (!pd)
 	{
 		cerr << "ibv_alloc_pd failed: " << strerror(errno) << endl;
@@ -189,13 +169,10 @@ int main(int argc, char *argv[])
 	}
 
 	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
-
 	qp_init_attr.recv_cq = send_cq;
 	qp_init_attr.send_cq = send_cq;
-
 	qp_init_attr.qp_type    = IBV_QPT_RC;
 	qp_init_attr.sq_sig_all = 1;
-
 	qp_init_attr.cap.max_send_wr  = 5;
 	qp_init_attr.cap.max_recv_wr  = 5;
 	qp_init_attr.cap.max_send_sge = 1;
@@ -230,16 +207,15 @@ int main(int argc, char *argv[])
 	                          IBV_ACCESS_REMOTE_READ;
 
 	// move both QPs in the INIT state, using ibv_modify_qp 
-	ret = ibv_modify_qp(send_qp, &qp_attr,
-						IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
+	ret = ibv_modify_qp(send_qp, &qp_attr, qp_attrs_flags);
 	if (ret != 0)
 	{
 		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;
 		goto free_write_qp;
 	}
 
-	ret = ibv_modify_qp(write_qp, &qp_attr,
-						IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
+	ret = ibv_modify_qp(write_qp, &qp_attr, qp_attrs_flags);
+
 	if (ret != 0)
 	{
 		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;

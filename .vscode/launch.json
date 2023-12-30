@@ -7,10 +7,9 @@
         "request": "launch",
         "program": "${workspaceFolder}/server",
         "args": [
-            "--src_ip 192.168.1.105",
-            "--dst_ip 192.168.1.4",
-            "--server true",
-            "--dev wlp0s20f3rxe"
+            "--src_ip=192.168.0.232",
+            "--dst_ip=192.168.0.149",
+            "--server",
         ],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
