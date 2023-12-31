@@ -2,14 +2,13 @@
     "version": "0.2.0",
     "configurations": [
       {
-        "name": "Debug Server",
+        "name": "Debug Server/Client",
         "type": "cppdbg",
         "request": "launch",
-        "program": "${workspaceFolder}/server.exe",
+        "program": "${workspaceFolder}/${fileBasenameNoExtension}.exe",
         "args": [
             "--src_ip=192.168.0.232",
             "--dst_ip=192.168.0.149",
-            "--server",
         ],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
