@@ -15,8 +15,7 @@ using namespace std;
 struct device_info
 {
 	union ibv_gid gid;
-	uint32_t send_qp_num, write_qp_num;
-	struct ibv_mr write_mr;
+	uint32_t send_qp_num;
 };
 
 int receive_data(struct device_info &data);
@@ -27,7 +26,7 @@ int main(int argc, char *argv[])
 	int num_devices, ret;
 	uint32_t gidIndex = 0;
 	string ip_str, remote_ip_str;
-	char data_send[100], data_write[100];
+	char data_send[100];
 	const char* data_to_send = "Hello from server with send operation";
 
 	struct ibv_cq *send_cq;
@@ -332,7 +331,7 @@ int receive_data(struct device_info &data)
 	read(connfd, &data, sizeof(data));
 	close(sockfd);
 
-	cout << "[CLIENT] send_qp_num: " << data.send_qp_num << ", write_qp_num " << data.write_qp_num << endl;
+	cout << "RECEIVE: send_qp_num: " << data.send_qp_num << endl;
 
 	return 0;
 }
@@ -350,14 +349,12 @@ int send_data(const struct device_info &data, string ip)
 	servaddr.sin_addr.s_addr = inet_addr(ip.c_str());
 	servaddr.sin_port = htons(8080);
 
-	cout << "[Server] Start sending data to ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << " and write_qp_num: " << data.write_qp_num << endl;
+	cout << "SEND: ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << endl;
 	if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
 		return 1;
 
 	write(sockfd, &data, sizeof(data));
 	close(sockfd);
-	
-	cout << "Done sending information about qp" << endl;
 
 	return 0;
 }

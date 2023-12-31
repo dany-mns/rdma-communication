@@ -15,8 +15,7 @@ using namespace std;
 struct device_info
 {
 	union ibv_gid gid;
-	uint32_t send_qp_num, write_qp_num;
-	struct ibv_mr write_mr;
+	uint32_t send_qp_num;
 };
 
 int receive_data(struct device_info &data);
@@ -27,7 +26,7 @@ int main(int argc, char *argv[])
 	int num_devices, ret;
 	uint32_t gidIndex = 0;
 	string ip_str, remote_ip_str;
-	char data_send[100], data_write[100];
+	char data_send[100];
 	const char* data_to_send = "Hello from server with send operation";
 
 	struct ibv_cq *send_cq;
@@ -117,6 +116,7 @@ int main(int argc, char *argv[])
 		cerr << "ibv_create_qp failed: " << strerror(errno) << endl;
 		goto free_send_cq;
 	}
+	local.send_qp_num = send_qp->qp_num;
 
 	memset(&qp_attr, 0, sizeof(qp_attr));
 
@@ -159,6 +159,7 @@ int main(int argc, char *argv[])
 
 		if (strncmp(ip_str.c_str(), interface_id + strlen("::ffff:"), INET_ADDRSTRLEN) == 0)
 		{
+            cout << "Found GID: " << entry.gid_index << endl;
 			gidIndex = entry.gid_index;
 			memcpy(&local.gid, &entry.gid, sizeof(local.gid));
 			break;
@@ -172,8 +173,6 @@ int main(int argc, char *argv[])
 		goto free_pd;
 	}
 
-	// register the "data_send" and "data_write" buffers for RDMA operations, using ibv_reg_mr;
-	// store the resulting mrs in send_mr and write_mr
 	send_mr = ibv_reg_mr(pd, data_send, sizeof(data_send), flags);
 	if (!send_mr)
 	{
@@ -181,7 +180,6 @@ int main(int argc, char *argv[])
 		goto free_send_qp;
 	}
 
-	local.send_qp_num = send_qp->qp_num;
 
 	// exchange data between the 2 applications
 	ret = send_data(local, remote_ip_str);
@@ -231,22 +229,6 @@ int main(int argc, char *argv[])
 		goto free_send_mr;
 	}
 
-	qp_attr.qp_state      = ibv_qp_state::IBV_QPS_RTS;
-	qp_attr.timeout       = 0;
-	qp_attr.retry_cnt     = 7;
-	qp_attr.rnr_retry     = 7;
-	qp_attr.sq_psn        = 0;
-	qp_attr.max_rd_atomic = 0;
-
-	// move the send and write QPs into the RTS state, using ibv_modify_qp
-	ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
-						IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
-	if (ret != 0)
-	{
-		cerr << "ibv_modify_qp - RTS - failed: " << strerror(ret) << endl;
-		goto free_send_mr;
-	}
-
 	memset(data_send, 0, sizeof(data_send));
 
     // initialise sg_send with the send mr address, size and lkey
@@ -271,7 +253,7 @@ int main(int argc, char *argv[])
     }
 
     // poll send_cq, using ibv_poll_cq, until it returns different than 0
-    cout << "Pooling for data" << endl;
+    cout << "Pooling for data..." << endl;
     ret = 0;
     do
     {
@@ -345,7 +327,7 @@ int receive_data(struct device_info &data)
 	read(connfd, &data, sizeof(data));
 	close(sockfd);
 
-	cout << "RECEIVE: send_qp_num: " << data.send_qp_num << ", write_qp_num " << data.write_qp_num << endl;
+	cout << "RECEIVE: send_qp_num: " << data.send_qp_num << endl;
 
 	return 0;
 }
@@ -363,7 +345,7 @@ int send_data(const struct device_info &data, string ip)
 	servaddr.sin_addr.s_addr = inet_addr(ip.c_str());
 	servaddr.sin_port = htons(8080);
 
-	cout << "SEND: ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << " and write_qp_num: " << data.write_qp_num << endl;
+	cout << "SEND: ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << endl;
 	if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
 		return 1;
 
