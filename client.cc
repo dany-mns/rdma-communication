@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <iostream>
 #include <string>
+#include <cstring>
 
 #include <boost/program_options.hpp>
 
@@ -23,18 +24,15 @@ int send_data(const struct device_info &data, string ip);
 
 int main(int argc, char *argv[])
 {
-	bool server = false;
 	int num_devices, ret;
 	uint32_t gidIndex = 0;
-	string ip_str, remote_ip_str, dev_str;
+	string ip_str, remote_ip_str;
 	char data_send[100], data_write[100];
+	const char* data_to_send = "Hello from server with send operation";
 
-	struct ibv_device **dev_list;
-	struct ibv_context *context;
-	struct ibv_pd *pd;
-	struct ibv_cq *send_cq, *write_cq;
+	struct ibv_cq *send_cq;
 	struct ibv_qp_init_attr qp_init_attr;
-	struct ibv_qp *send_qp, *write_qp;
+	struct ibv_qp *send_qp;
 	struct ibv_qp_attr qp_attr;
 	struct ibv_port_attr port_attr;
 	struct device_info local, remote;
@@ -42,7 +40,7 @@ int main(int argc, char *argv[])
 	struct ibv_sge sg_send, sg_write, sg_recv;
 	struct ibv_send_wr wr_send, *bad_wr_send, wr_write, *bad_wr_write;
 	struct ibv_recv_wr wr_recv, *bad_wr_recv;
-	struct ibv_mr *send_mr, *write_mr, remote_write_mr;
+	struct ibv_mr *send_mr;
 	struct ibv_wc wc;
 
 	auto flags = IBV_ACCESS_LOCAL_WRITE | 
@@ -52,10 +50,8 @@ int main(int argc, char *argv[])
 	boost::program_options::options_description desc("Allowed options");
 	desc.add_options()
 		("help", "show possible options")
-		("dev", boost::program_options::value<string>(), "rdma device to use")
 		("src_ip", boost::program_options::value<string>(), "source ip")
 		("dst_ip", boost::program_options::value<string>(), "destination ip")
-		("server", "run as server")
 	;
 
 	boost::program_options::variables_map vm;
@@ -68,11 +64,6 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	if (vm.count("dev"))
-		dev_str = vm["dev"].as<string>();
-	else
-		cerr << "the --dev argument is required" << endl;
-
 	if (vm.count("src_ip"))
 		ip_str = vm["src_ip"].as<string>();
 	else
@@ -83,38 +74,18 @@ int main(int argc, char *argv[])
 	else
 		cerr << "the --dst_ip argument is required" << endl;
 
-	if (vm.count("server"))
-		server = true;
-
 	// populate dev_list using ibv_get_device_list - use num_devices as argument
-	dev_list = ibv_get_device_list(&num_devices);
-	if (!dev_list)
+	struct ibv_device** dev_list = ibv_get_device_list(&num_devices);
+	cout << "Found " << num_devices << " device(s)" << endl;
+	if (!dev_list || num_devices != 1)
 	{
-		cerr << "ibv_get_device_list failed: " << strerror(errno) << endl;
+		cerr << "ibv_get_device_list failed or number of devices != 1" << strerror(errno) << endl;
 		return 1;
 	}
-
-	for (int i = 0; i < num_devices; i++)
-	{
-		// get the device name, using ibv_get_device_name
-		auto dev = ibv_get_device_name(dev_list[i]);
-		if (!dev)
-		{
-			cerr << "ibv_get_device_name failed: " << strerror(errno) << endl;
-			goto free_devlist;
-		}
-
-		// compare it to the device provided in the program arguments (dev_str)
-		// and open the device; store the device context in "context"
-		if (strcmp(dev, dev_str.c_str()) == 0)
-		{
-			context = ibv_open_device(dev_list[i]);
-			break;
-		}
-	}
-
-	// allocate a PD (protection domain), using ibv_alloc_pd
-	pd = ibv_alloc_pd(context);
+	cout << "Interface to use: " << dev_list[0]->name << " more info found at: " << dev_list[0]->ibdev_path << endl;
+	struct ibv_context *context = ibv_open_device(dev_list[0]);
+	struct ibv_pd *pd = ibv_alloc_pd(context);
+	int qp_attrs_flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
 	if (!pd)
 	{
 		cerr << "ibv_alloc_pd failed: " << strerror(errno) << endl;
@@ -129,22 +100,11 @@ int main(int argc, char *argv[])
 		goto free_pd;
 	}
 
-	// create a CQ for the write operations, using ibv_create_cq 
-	write_cq = ibv_create_cq(context, 0x10, nullptr, nullptr, 0);
-	if (!write_cq)
-	{
-		cerr << "ibv_create_cq - recv - failed: " << strerror(errno) << endl;
-		goto free_send_cq;
-	}
-
 	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
-
 	qp_init_attr.recv_cq = send_cq;
 	qp_init_attr.send_cq = send_cq;
-
 	qp_init_attr.qp_type    = IBV_QPT_RC;
 	qp_init_attr.sq_sig_all = 1;
-
 	qp_init_attr.cap.max_send_wr  = 5;
 	qp_init_attr.cap.max_recv_wr  = 5;
 	qp_init_attr.cap.max_send_sge = 1;
@@ -155,18 +115,7 @@ int main(int argc, char *argv[])
 	if (!send_qp)
 	{
 		cerr << "ibv_create_qp failed: " << strerror(errno) << endl;
-		goto free_write_cq;
-	}
-
-	qp_init_attr.recv_cq = write_cq;
-	qp_init_attr.send_cq = write_cq;
-
-	// create a QP for the write operations, using ibv_create_qp
-	write_qp = ibv_create_qp(pd, &qp_init_attr);
-	if (!write_qp)
-	{
-		cerr << "ibv_create_qp failed: " << strerror(errno) << endl;
-		goto free_send_qp;
+		goto free_send_cq;
 	}
 
 	memset(&qp_attr, 0, sizeof(qp_attr));
@@ -179,20 +128,11 @@ int main(int argc, char *argv[])
 	                          IBV_ACCESS_REMOTE_READ;
 
 	// move both QPs in the INIT state, using ibv_modify_qp 
-	ret = ibv_modify_qp(send_qp, &qp_attr,
-						IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
+	ret = ibv_modify_qp(send_qp, &qp_attr, qp_attrs_flags);
 	if (ret != 0)
 	{
 		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;
-		goto free_write_qp;
-	}
-
-	ret = ibv_modify_qp(write_qp, &qp_attr,
-						IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
-	if (ret != 0)
-	{
-		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;
-		goto free_write_qp;
+		goto free_send_qp;
 	}
 
 	// use ibv_query_port to get information about port number 1
@@ -229,7 +169,7 @@ int main(int argc, char *argv[])
 	if (gidIndex == 0)
 	{
 		cerr << "Given IP not found in GID table" << endl;
-		goto free_write_qp;
+		goto free_pd;
 	}
 
 	// register the "data_send" and "data_write" buffers for RDMA operations, using ibv_reg_mr;
@@ -238,52 +178,24 @@ int main(int argc, char *argv[])
 	if (!send_mr)
 	{
 		cerr << "ibv_reg_mr failed: " << strerror(errno) << endl;
-		goto free_write_qp;
+		goto free_send_qp;
 	}
 
-	write_mr = ibv_reg_mr(pd, data_write, sizeof(data_write), flags);
-	if (!write_mr)
+	local.send_qp_num = send_qp->qp_num;
+
+	// exchange data between the 2 applications
+	ret = send_data(local, remote_ip_str);
+	if (ret != 0)
 	{
-		cerr << "ibv_reg_mr failed: " << strerror(errno) << endl;
+		cerr << "send_data failed: " << endl;
 		goto free_send_mr;
 	}
 
-	memcpy(&local.write_mr, write_mr, sizeof(local.write_mr));
-	local.send_qp_num = send_qp->qp_num;
-	local.write_qp_num = write_qp->qp_num;
-
-	// exchange data between the 2 applications
-	if(server)
+	ret = receive_data(remote);
+	if (ret != 0)
 	{
-		ret = receive_data(remote);
-		if (ret != 0)
-		{
-			cerr << "receive_data failed: " << endl;
-			goto free_write_mr;
-		}
-
-		ret = send_data(local, remote_ip_str);
-		if (ret != 0)
-		{
-			cerr << "send_data failed: " << endl;
-			goto free_write_mr;
-		}
-	}
-	else
-	{
-		ret = send_data(local, remote_ip_str);
-		if (ret != 0)
-		{
-			cerr << "send_data failed: " << endl;
-			goto free_write_mr;
-		}
-
-		ret = receive_data(remote);
-		if (ret != 0)
-		{
-			cerr << "receive_data failed: " << endl;
-			goto free_write_mr;
-		}
+		cerr << "receive_data failed: " << endl;
+		goto free_send_mr;
 	}
 
 	memset(&qp_attr, 0, sizeof(qp_attr));
@@ -316,20 +228,7 @@ int main(int argc, char *argv[])
 	if (ret != 0)
 	{
 		cerr << "ibv_modify_qp - RTR - failed: " << strerror(ret) << endl;
-		goto free_write_mr;
-	}
-
-	qp_attr.dest_qp_num  = remote.write_qp_num;
-
-	// move the write QP into the RTR state, using ibv_modify_qp
-	ret = ibv_modify_qp(write_qp, &qp_attr, IBV_QP_STATE | IBV_QP_AV |
-						IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
-						IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
-
-	if (ret != 0)
-	{
-		cerr << "ibv_modify_qp - RTR - failed: " << strerror(ret) << endl;
-		goto free_write_mr;
+		goto free_send_mr;
 	}
 
 	qp_attr.qp_state      = ibv_qp_state::IBV_QPS_RTS;
@@ -345,171 +244,57 @@ int main(int argc, char *argv[])
 	if (ret != 0)
 	{
 		cerr << "ibv_modify_qp - RTS - failed: " << strerror(ret) << endl;
-		goto free_write_mr;
-	}
-
-	ret = ibv_modify_qp(write_qp, &qp_attr, IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
-						IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
-	if (ret != 0)
-	{
-		cerr << "ibv_modify_qp - RTS - failed: " << strerror(ret) << endl;
-		goto free_write_mr;
+		goto free_send_mr;
 	}
 
 	memset(data_send, 0, sizeof(data_send));
-	memset(data_write, 0, sizeof(data_write));
 
-	if (server)
-	{
-		memcpy(data_write, "Hello, but with write", 21);
+    // initialise sg_send with the send mr address, size and lkey
+    memset(&sg_recv, 0, sizeof(sg_recv));
+    sg_recv.addr   = (uintptr_t)send_mr->addr;
+    sg_recv.length = sizeof(data_send);
+    sg_recv.lkey   = send_mr->lkey;
 
-		// initialise sg_write with the write mr address, size and lkey
-		memset(&sg_write, 0, sizeof(sg_write));
-		sg_write.addr   = (uintptr_t)write_mr->addr;
-		sg_write.length = sizeof(data_write);
-		sg_write.lkey   = write_mr->lkey;
-		
-		// create a work request, with the Write With Immediate operation
-		memset(&wr_write, 0, sizeof(wr_write));
-		wr_write.wr_id      = 0;
-		wr_write.sg_list    = &sg_write;
-		wr_write.num_sge    = 1;
-		wr_write.opcode     = IBV_WR_RDMA_WRITE_WITH_IMM;
-		wr_write.send_flags = IBV_SEND_SIGNALED;
+    // create a receive work request
+    memset(&wr_recv, 0, sizeof(wr_recv));
+    wr_recv.wr_id      = 0;
+    wr_recv.sg_list    = &sg_recv;
+    wr_recv.num_sge    = 1;
 
-		wr_write.imm_data            = htonl(0x1234);
+    // post the receive work request, using ibv_post_recv, for the send QP
+    cout << "Post work request to receive data" << endl;
+    ret = ibv_post_recv(send_qp, &wr_recv, &bad_wr_recv);
+    if (ret != 0)
+    {
+        cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+        goto free_send_mr;
+    }
 
-		// fill the wr.rdma field of wr_write with the remote address and key
-		wr_write.wr.rdma.remote_addr = (uintptr_t)remote.write_mr.addr;
-		wr_write.wr.rdma.rkey        = remote.write_mr.rkey;
+    // poll send_cq, using ibv_poll_cq, until it returns different than 0
+    cout << "Pooling for data" << endl;
+    ret = 0;
+    do
+    {
+        ret = ibv_poll_cq(send_cq, 1, &wc);
+    } while (ret == 0);
 
-		// post the work request, using ibv_post_send
-		ret = ibv_post_send(write_qp, &wr_write, &bad_wr_write);
-		if (ret != 0)
-		{
-			cerr << "ibv_post_send failed: " << strerror(ret) << endl;
-			goto free_write_mr;
-		}
+    // check the wc (work completion) structure status;
+    // return error on anything different than ibv_wc_status::IBV_WC_SUCCESS
+    if (wc.status != ibv_wc_status::IBV_WC_SUCCESS)
+    {
+        cerr << "ibv_poll_cq failed: " << ibv_wc_status_str(wc.status) << endl;
+        goto free_send_mr;
+    }
 
-		// initialise sg_send with the send mr address, size and lkey
-		memset(&sg_recv, 0, sizeof(sg_recv));
-		sg_recv.addr   = (uintptr_t)send_mr->addr;
-		sg_recv.length = sizeof(data_send);
-		sg_recv.lkey   = send_mr->lkey;
-
-		// create a receive work request
-		memset(&wr_recv, 0, sizeof(wr_recv));
-		wr_recv.wr_id      = 0;
-		wr_recv.sg_list    = &sg_recv;
-		wr_recv.num_sge    = 1;
-
-		// post the receive work request, using ibv_post_recv, for the send QP
-		ret = ibv_post_recv(send_qp, &wr_recv, &bad_wr_recv);
-		if (ret != 0)
-		{
-			cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
-			goto free_write_mr;
-		}
-
-		// poll send_cq, using ibv_poll_cq, until it returns different than 0
-		ret = 0;
-		do
-		{
-			ret = ibv_poll_cq(send_cq, 1, &wc);
-		} while (ret == 0);
-
-		// check the wc (work completion) structure status;
-		// return error on anything different than ibv_wc_status::IBV_WC_SUCCESS
-		if (wc.status != ibv_wc_status::IBV_WC_SUCCESS)
-		{
-			cerr << "ibv_poll_cq failed: " << ibv_wc_status_str(wc.status) << endl;
-			goto free_write_mr;
-		}
-
-		cout << data_send << endl;
-	}
-	else
-	{
-		memcpy(data_send, "Hello", 5);
-
-		// initialise sg_write with the write mr address, size and lkey
-		memset(&sg_recv, 0, sizeof(sg_recv));
-		sg_recv.addr   = (uintptr_t)write_mr->addr;
-		sg_recv.length = sizeof(data_write);
-		sg_recv.lkey   = write_mr->lkey;
-
-		memset(&wr_recv, 0, sizeof(wr_recv));
-		wr_recv.wr_id      = 0;
-		wr_recv.sg_list    = &sg_recv;
-		wr_recv.num_sge    = 1;
-
-		// post a receive work request, using ibv_post_recv, for the write QP
-		ret = ibv_post_recv(write_qp, &wr_recv, &bad_wr_recv);
-		if (ret != 0)
-		{
-			cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
-			goto free_write_mr;
-		}
-
-		// poll write_cq, using ibv_poll_cq, until it returns different than 0
-		ret = 0;
-		do
-		{
-			ret = ibv_poll_cq(write_cq, 1, &wc);
-		} while (ret == 0);
-
-		// check the wc (work completion) structure status;
-		//         return error on anything different than ibv_wc_status::IBV_WC_SUCCESS
-		if (wc.status != ibv_wc_status::IBV_WC_SUCCESS)
-		{
-			cerr << "ibv_poll_cq failed: " << ibv_wc_status_str(wc.status) << endl;
-			goto free_write_mr;
-		}
-
-		cout << data_write << endl;
-
-		// initialise sg_send with the send mr address, size and lkey
-		memset(&sg_send, 0, sizeof(sg_send));
-		sg_send.addr   = (uintptr_t)send_mr->addr;
-		sg_send.length = sizeof(data_send);
-		sg_send.lkey   = send_mr->lkey;
-
-		// create a work request, with the RDMA Send operation
-		memset(&wr_send, 0, sizeof(wr_send));
-		wr_send.wr_id      = 0;
-		wr_send.sg_list    = &sg_send;
-		wr_send.num_sge    = 1;
-		wr_send.opcode     = IBV_WR_SEND;
-		wr_send.send_flags = IBV_SEND_SIGNALED;
-
-		// post the work request, using ibv_post_send
-		ret = ibv_post_send(send_qp, &wr_send, &bad_wr_send);
-		if (ret != 0)
-		{
-			cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
-			goto free_write_mr;
-		}
-	}
-
-free_write_mr:
-	// free write_mr, using ibv_dereg_mr
-	ibv_dereg_mr(write_mr);
+	cout << "Done receive data '" << data_send << "'" << endl; 
 
 free_send_mr:
 	// free send_mr, using ibv_dereg_mr
 	ibv_dereg_mr(send_mr);
 
-free_write_qp:
-	// free write_qp, using ibv_destroy_qp
-	ibv_destroy_qp(write_qp);
-
 free_send_qp:
 	// free send_qp, using ibv_destroy_qp
 	ibv_destroy_qp(send_qp);
-
-free_write_cq:
-	// free write_cq, using ibv_destroy_cq
-	ibv_destroy_cq(write_cq);
 
 free_send_cq:
 	// free send_cq, using ibv_destroy_cq
@@ -560,7 +345,7 @@ int receive_data(struct device_info &data)
 	read(connfd, &data, sizeof(data));
 	close(sockfd);
 
-	cout << "[CLIENT] send_qp_num: " << data.send_qp_num << ", write_qp_num " << data.write_qp_num << endl;
+	cout << "RECEIVE: send_qp_num: " << data.send_qp_num << ", write_qp_num " << data.write_qp_num << endl;
 
 	return 0;
 }
@@ -578,14 +363,12 @@ int send_data(const struct device_info &data, string ip)
 	servaddr.sin_addr.s_addr = inet_addr(ip.c_str());
 	servaddr.sin_port = htons(8080);
 
-	cout << "[Server] Start sending data to ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << " and write_qp_num: " << data.write_qp_num << endl;
+	cout << "SEND: ip: " << ip.c_str() << " with send_qp_num: " << data.send_qp_num << " and write_qp_num: " << data.write_qp_num << endl;
 	if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
 		return 1;
 
 	write(sockfd, &data, sizeof(data));
 	close(sockfd);
-	
-	cout << "Done sending information about qp" << endl;
 
 	return 0;
 }
