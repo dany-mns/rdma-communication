@@ -243,7 +243,6 @@ int main(int argc, char *argv[])
     wr_recv.sg_list    = &sg_recv;
     wr_recv.num_sge    = 1;
 
-    // post the receive work request, using ibv_post_recv, for the send QP
     cout << "Post work request to receive data" << endl;
     ret = ibv_post_recv(send_qp, &wr_recv, &bad_wr_recv);
     if (ret != 0)
@@ -252,7 +251,6 @@ int main(int argc, char *argv[])
         goto free_send_mr;
     }
 
-    // poll send_cq, using ibv_poll_cq, until it returns different than 0
     cout << "Pooling for data..." << endl;
     ret = 0;
     do
