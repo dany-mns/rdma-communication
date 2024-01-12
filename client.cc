@@ -258,8 +258,6 @@ int main(int argc, char *argv[])
         ret = ibv_poll_cq(send_cq, 1, &wc);
     } while (ret == 0);
 
-    // check the wc (work completion) structure status;
-    // return error on anything different than ibv_wc_status::IBV_WC_SUCCESS
     if (wc.status != ibv_wc_status::IBV_WC_SUCCESS)
     {
         cerr << "ibv_poll_cq failed: " << ibv_wc_status_str(wc.status) << endl;
@@ -269,27 +267,21 @@ int main(int argc, char *argv[])
 	cout << "Done receive data '" << data_send << "'" << endl; 
 
 free_send_mr:
-	// free send_mr, using ibv_dereg_mr
 	ibv_dereg_mr(send_mr);
 
 free_send_qp:
-	// free send_qp, using ibv_destroy_qp
 	ibv_destroy_qp(send_qp);
 
 free_send_cq:
-	// free send_cq, using ibv_destroy_cq
 	ibv_destroy_cq(send_cq);
 
 free_pd:
-	// free pd, using ibv_dealloc_pd
 	ibv_dealloc_pd(pd);
 
 free_context:
-	// close the RDMA device, using ibv_close_device
 	ibv_close_device(context);
 
 free_devlist:
-	// free dev_list, using ibv_free_device_list
 	ibv_free_device_list(dev_list);
 
 	return 0;
