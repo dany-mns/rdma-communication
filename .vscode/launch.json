@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
       {
-        "name": "Debug Server/Client",
+        "name": "Debug Master/Node",
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/${fileBasenameNoExtension}.exe",
@@ -22,7 +22,7 @@
             "ignoreFailures": true
           }
         ],
-        "preLaunchTask": "build server",
+        "preLaunchTask": "build cpp files",
         "miDebuggerPath": "/usr/bin/gdb"
       }
     ]

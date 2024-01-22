@@ -1,12 +1,12 @@
 LDFLAGS = -libverbs -lboost_program_options
 
-all: server client 
+all: node master 
 
-server: server.cc
-	$(CXX) $^ -g -o server.exe $(LDFLAGS)
+node: node.cc
+	$(CXX) $^ -g -o node.exe $(LDFLAGS)
 
-client: client.cc
-	$(CXX) $^ -g -o client.exe $(LDFLAGS)
+master: master.cc
+	$(CXX) $^ -g -o master.exe $(LDFLAGS)
 
 clean:
 	rm *.exe

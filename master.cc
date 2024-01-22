@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
 	uint32_t gidIndex = 0;
 	string ip_address, remote_ip_address;
 	char data_send[100];
-	const char* data_to_send = "Hello from server with send operation";
+	const char* data_to_send = "Hello from with send operation";
 
 	struct ibv_cq *send_cq;
 	struct ibv_qp_init_attr qp_init_attr;

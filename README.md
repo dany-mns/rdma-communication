@@ -1,6 +1,7 @@
-# rdma-communication
-client - server communication
-
+# rdma-communication for incast
+N1      ----
+N2      ----     [Master]
+N3      ----
 # Create RXE interface
 
 `sudo rdma link add <netdev>rxe type rxe netdev <netdev>`
