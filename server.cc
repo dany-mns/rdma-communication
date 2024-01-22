@@ -21,11 +21,54 @@ struct device_info
 int receive_data(struct device_info &data);
 int send_data(const struct device_info &data, string ip);
 
+void init_input_params_from_argc(int argc, char *argv[], string &ip_address, string &ip_remote_address) {
+		boost::program_options::options_description desc("Allowed options");
+	desc.add_options()
+		("help", "show possible options")
+		("src_ip", boost::program_options::value<string>(), "source ip")
+		("dst_ip", boost::program_options::value<string>(), "destination ip")
+	;
+
+	boost::program_options::variables_map vm;
+	boost::program_options::store(boost::program_options::parse_command_line(argc, argv, desc), vm);
+	boost::program_options::notify(vm);
+
+	if (vm.count("help"))
+	{
+		cout << desc << endl;
+		exit(0);
+	}
+
+	if (vm.count("src_ip"))
+		ip_address = vm["src_ip"].as<string>();
+	else
+		cerr << "the --src_ip argument is required" << endl;
+
+	if (vm.count("dst_ip"))
+		ip_remote_address = vm["dst_ip"].as<string>();
+	else
+		cerr << "the --dst_ip argument is required" << endl;
+
+}
+
+struct ibv_device** get_rxe_device() {
+	int num_devices;
+	struct ibv_device** dev_list = ibv_get_device_list(&num_devices);
+	cout << "Found " << num_devices << " device(s)" << endl;
+	if (!dev_list || num_devices != 1)
+	{
+		cerr << "ibv_get_device_list failed or number of devices != 1" << strerror(errno) << endl;
+		exit(1);
+	}
+	cout << "Interface to use: " << dev_list[0]->name << " more info found at: " << dev_list[0]->ibdev_path << endl;
+	return dev_list;
+}
+
 int main(int argc, char *argv[])
 {
-	int num_devices, ret;
+	int ret;
 	uint32_t gidIndex = 0;
-	string ip_str, remote_ip_str;
+	string ip_address, remote_ip_address;
 	char data_send[100];
 	const char* data_to_send = "Hello from server with send operation";
 
@@ -46,42 +89,10 @@ int main(int argc, char *argv[])
 	             IBV_ACCESS_REMOTE_WRITE | 
 	             IBV_ACCESS_REMOTE_READ;
 
-	boost::program_options::options_description desc("Allowed options");
-	desc.add_options()
-		("help", "show possible options")
-		("src_ip", boost::program_options::value<string>(), "source ip")
-		("dst_ip", boost::program_options::value<string>(), "destination ip")
-	;
 
-	boost::program_options::variables_map vm;
-	boost::program_options::store(boost::program_options::parse_command_line(argc, argv, desc), vm);
-	boost::program_options::notify(vm);
+	init_input_params_from_argc(argc, argv, ip_address, remote_ip_address);
 
-	if (vm.count("help"))
-	{
-		cout << desc << endl;
-		return 0;
-	}
-
-	if (vm.count("src_ip"))
-		ip_str = vm["src_ip"].as<string>();
-	else
-		cerr << "the --src_ip argument is required" << endl;
-
-	if (vm.count("dst_ip"))
-		remote_ip_str = vm["dst_ip"].as<string>();
-	else
-		cerr << "the --dst_ip argument is required" << endl;
-
-	// populate dev_list using ibv_get_device_list - use num_devices as argument
-	struct ibv_device** dev_list = ibv_get_device_list(&num_devices);
-	cout << "Found " << num_devices << " device(s)" << endl;
-	if (!dev_list || num_devices != 1)
-	{
-		cerr << "ibv_get_device_list failed or number of devices != 1" << strerror(errno) << endl;
-		return 1;
-	}
-	cout << "Interface to use: " << dev_list[0]->name << " more info found at: " << dev_list[0]->ibdev_path << endl;
+	struct ibv_device** dev_list = get_rxe_device();
 	struct ibv_context *context = ibv_open_device(dev_list[0]);
 	struct ibv_pd *pd = ibv_alloc_pd(context);
 	int qp_attrs_flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
@@ -156,7 +167,7 @@ int main(int argc, char *argv[])
 		uint32_t ip;
 		inet_pton(AF_INET, interface_id + strlen("::ffff:"), &ip);
 
-		if (strncmp(ip_str.c_str(), interface_id + strlen("::ffff:"), INET_ADDRSTRLEN) == 0)
+		if (strncmp(ip_address.c_str(), interface_id + strlen("::ffff:"), INET_ADDRSTRLEN) == 0)
 		{
 			gidIndex = entry.gid_index;
 			memcpy(&local.gid, &entry.gid, sizeof(local.gid));
@@ -190,7 +201,7 @@ int main(int argc, char *argv[])
 		goto free_send_mr;
 	}
 
-	ret = send_data(local, remote_ip_str);
+	ret = send_data(local, remote_ip_address);
 	if (ret != 0)
 	{
 		cerr << "send_data failed: " << endl;
