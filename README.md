@@ -1,6 +1,9 @@
 # rdma-communication
 client - server communication
 
+# Create RXE interface
+
+`sudo rdma link add <netdev>rxe type rxe netdev <netdev>`
 
 sudo apt install ibverbs-utils
 
