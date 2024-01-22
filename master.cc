@@ -95,7 +95,6 @@ int main(int argc, char *argv[])
 	struct ibv_device** dev_list = get_rxe_device();
 	struct ibv_context *context = ibv_open_device(dev_list[0]);
 	struct ibv_pd *pd = ibv_alloc_pd(context);
-	int qp_attrs_flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
 	if (!pd)
 	{
 		cerr << "ibv_alloc_pd failed: " << strerror(errno) << endl;
@@ -138,7 +137,7 @@ int main(int argc, char *argv[])
 	                          IBV_ACCESS_REMOTE_READ;
 
 	// move both QPs in the INIT state, using ibv_modify_qp 
-	ret = ibv_modify_qp(send_qp, &qp_attr, qp_attrs_flags);
+	ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
 	if (ret != 0)
 	{
 		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;

@@ -13,3 +13,6 @@ Prerequisite:
 2. Create send/receive completion queue (CQ)
 3. Create queue pairs (QP)
 4. Pooling for events
+
+
+PowerPoint: https://docs.google.com/presentation/d/1no1rfRhp0-FFuKN-RnxrxktSyOTxnhS5j40Wv3FD5EU/edit?usp=sharing
