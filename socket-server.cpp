@@ -11,9 +11,24 @@
 using namespace std;
 
 const int BACKLOG = 5;
-list<int> clients;
+typedef struct rdma_client_ {
+    int socket_fd;
+    struct device_info rdma_info;
+} rdma_client_s;
 
+list<rdma_client_s> clients;
+
+// RDMA params
 struct device_info local_rdma;
+struct ibv_qp_attr qp_attr;
+uint32_t gidIndex = 0;
+struct ibv_port_attr port_attr;
+struct ibv_qp *send_qp;
+struct ibv_recv_wr wr_recv, *bad_wr_recv;
+struct ibv_sge sg_send, sg_write, sg_recv;
+struct ibv_mr *send_mr;
+struct ibv_cq *send_cq;
+struct ibv_wc wc;
 
 void handleClient(int clientSocket) {
     struct device_info client_rdma;
@@ -41,11 +56,12 @@ void handleClient(int clientSocket) {
         } 
     }
 
-    if(!clientSocketExist(clients, clientSocket)) {
-        clients.push_back(clientSocket);
-        // Send client in non blocking because we will just send unlock message going further
-        set_socket_non_blocking(clientSocket);
-    }
+    rdma_client_s client_rdma_info;
+    client_rdma_info.socket_fd = clientSocket;
+    client_rdma_info.rdma_info = client_rdma;
+    // TODO add a check in case same client reconnect
+    clients.push_back(client_rdma_info);
+    set_socket_non_blocking(clientSocket);
 }
 
 // Function to accept incoming client connections
@@ -107,7 +123,7 @@ void acceptConnections() {
 
 void cleanClientList() {
     for (const auto& client : clients) {
-        close(client);
+        close(client.socket_fd);
     }
 
     clients.clear();
@@ -115,20 +131,96 @@ void cleanClientList() {
 
 void rdma_communication() {
     cout << "START RDMA COMMUNICATION" << endl;
+    char data_send[100];
     while(true) {
         for(const auto &client : clients) {
-            cout << "> Unlock client socket: " << client << " to send data" << endl;
+            cout << "> Unlock client socket: " << client.socket_fd << " to send data" << endl;
             const char* unlockMessage = "[SERVER] UNLOCK";
-            ssize_t bytesSent = send(client, unlockMessage, strlen(unlockMessage), 0);
+            ssize_t bytesSent = send(client.socket_fd, unlockMessage, strlen(unlockMessage), 0);
 
             if (bytesSent == -1) {
                 perror("Error while sending data");
             } else {
-                std::cout << "Unlock successfully sent to client (Socket " << client << "): " << unlockMessage << std::endl;
+                std::cout << "Unlock successfully sent to client (Socket " << client.socket_fd << "): " << unlockMessage << std::endl;
             }
 
             // Pool data from RDMA for a small period of time
-            cout << "Pool for data from queue for client " << client << endl;
+            cout << "Pool for data from queue for client " << client.socket_fd << endl;
+
+
+
+            memset(&qp_attr, 0, sizeof(qp_attr));
+
+            qp_attr.path_mtu              = port_attr.active_mtu;
+            qp_attr.qp_state              = ibv_qp_state::IBV_QPS_RTR;
+            qp_attr.rq_psn                = 0;
+            qp_attr.max_dest_rd_atomic    = 1;
+            qp_attr.min_rnr_timer         = 0;
+            qp_attr.ah_attr.is_global     = 1;
+            qp_attr.ah_attr.sl            = 0;
+            qp_attr.ah_attr.src_path_bits = 0;
+            qp_attr.ah_attr.port_num      = 1;
+
+            memcpy(&qp_attr.ah_attr.grh.dgid, &client.rdma_info.gid, sizeof(client.rdma_info.gid));
+
+            qp_attr.ah_attr.grh.flow_label    = 0;
+            qp_attr.ah_attr.grh.hop_limit     = 5;
+            qp_attr.ah_attr.grh.sgid_index    = gidIndex;
+            qp_attr.ah_attr.grh.traffic_class = 0;
+
+            qp_attr.ah_attr.dlid = 1;
+            qp_attr.dest_qp_num  = client.rdma_info.send_qp_num;
+
+            // move the send QP into the RTR state, using ibv_modify_qp
+            int ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_AV |
+                                IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                                IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+
+            if (ret != 0)
+            {
+                cerr << "ibv_modify_qp - RTR - failed: " << strerror(ret) << endl;
+                exit(1);
+            }
+
+            memset(data_send, 0, sizeof(data_send));
+
+            // initialise sg_send with the send mr address, size and lkey
+            memset(&sg_recv, 0, sizeof(sg_recv));
+            sg_recv.addr   = (uintptr_t)send_mr->addr;
+            sg_recv.length = sizeof(data_send);
+            sg_recv.lkey   = send_mr->lkey;
+
+            // create a receive work request
+            memset(&wr_recv, 0, sizeof(wr_recv));
+            wr_recv.wr_id      = 0;
+            wr_recv.sg_list    = &sg_recv;
+            wr_recv.num_sge    = 1;
+
+            cout << "Post work request to receive data" << endl;
+            ret = ibv_post_recv(send_qp, &wr_recv, &bad_wr_recv);
+            if (ret != 0)
+            {
+                cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+                exit(1);
+            }
+
+            cout << "Pooling for data..." << endl;
+            ret = 0;
+            do
+            {
+                ret = ibv_poll_cq(send_cq, 1, &wc);
+            } while (ret == 0);
+
+            if (wc.status != ibv_wc_status::IBV_WC_SUCCESS)
+            {
+                cerr << "ibv_poll_cq failed: " << ibv_wc_status_str(wc.status) << endl;
+                exit(1);
+            }
+
+            cout << "Done receive data '" << data_send << "'" << endl; 
+
+
+
 
             // Sleep before next client TODO Remove later
             cout << "Sleep few seconds" << endl;
@@ -144,15 +236,10 @@ int main() {
 	struct ibv_context *context = ibv_open_device(dev_list[0]);
 	struct ibv_pd *pd = ibv_alloc_pd(context);
     struct ibv_qp_init_attr qp_init_attr;
-    struct ibv_port_attr port_attr;
-    struct ibv_qp *send_qp;
-    struct ibv_cq *send_cq;
     int ret;
-    struct ibv_qp_attr qp_attr;
-    struct ibv_mr *send_mr;
     char data_send[100];
 
-    set_gid(context, port_attr, &local_rdma);
+    set_gid(context, port_attr, &local_rdma, gidIndex);
 	
     if (!pd)
 	{
