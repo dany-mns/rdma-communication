@@ -8,12 +8,19 @@
 #include <arpa/inet.h>
 #include <list>
 #include <fcntl.h> 
+#include <infiniband/verbs.h>
 using namespace std;
 
 const int PORT = 8080;
 const int BACKLOG = 5;
 const int BUFFER_SIZE = 1024;
 list<int> clients;
+
+struct device_info
+{
+	union ibv_gid gid;
+	uint32_t send_qp_num;
+};
 
 bool clientSocketExist(std::list<int> clients, int currentSocket) {
     for(const int& client : clients) {
@@ -41,9 +48,9 @@ int set_socket_non_blocking(int socket) {
 }
 
 void handleClient(int clientSocket) {
-    char buffer[BUFFER_SIZE];
+    struct device_info client_rdma;
     
-    ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+    ssize_t bytesRead = recv(clientSocket, &client_rdma, sizeof(client_rdma), 0);
 
     if (bytesRead == -1) {
         perror("Error while receiving data");
@@ -54,9 +61,9 @@ void handleClient(int clientSocket) {
     } else {
         // Null-terminate the received data to treat it as a string
         cout << "> Receive RDMA device info from NODE." << endl;
+        cout << "VEEEEEE " << client_rdma.gid.global.interface_id << endl;
 
-        buffer[bytesRead] = '\0';
-        std::cout << "Received message from client (Socket " << clientSocket << "): " << buffer << std::endl;
+        // std::cout << "Received message from client (Socket " << clientSocket << "): " << buffer << std::endl;
         
         cout << "< Send RDMA device info to NODE" << endl;
         const char* responseMessage = "[SERVER] RDMA DEVICE INFO";

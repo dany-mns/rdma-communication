@@ -67,6 +67,22 @@ struct ibv_device** get_rxe_device() {
 	return dev_list;
 }
 
+struct ibv_qp *create_qp_for_send(struct ibv_qp_init_attr &qp_init_attr, struct ibv_pd *pd, struct ibv_cq *send_cq) {
+	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
+	qp_init_attr.recv_cq = send_cq;
+	qp_init_attr.send_cq = send_cq;
+	qp_init_attr.qp_type    = IBV_QPT_RC;
+	qp_init_attr.sq_sig_all = 1;
+	qp_init_attr.cap.max_send_wr  = 5;
+	qp_init_attr.cap.max_recv_wr  = 5;
+	qp_init_attr.cap.max_send_sge = 1;
+	qp_init_attr.cap.max_recv_sge = 1;
+
+	// create a QP (queue pair) for the send operations, using ibv_create_qp
+	return ibv_create_qp(pd, &qp_init_attr);
+}
+
+
 int main() {
     int clientSocket;
     struct sockaddr_in serverAddr;
@@ -79,7 +95,14 @@ int main() {
     struct ibv_device** dev_list = get_rxe_device();
 	struct ibv_context *context = ibv_open_device(dev_list[0]);
 	struct ibv_pd *pd = ibv_alloc_pd(context);
+    struct ibv_qp_init_attr qp_init_attr;
     struct ibv_port_attr port_attr;
+    struct ibv_qp *send_qp;
+    struct ibv_cq *send_cq;
+    int ret;
+    struct ibv_qp_attr qp_attr;
+    struct ibv_mr *send_mr;
+    char data_send[100];
 
     set_gid(context, port_attr, &local_rdma);
 	
@@ -88,6 +111,49 @@ int main() {
 		cerr << "ibv_alloc_pd failed: " << strerror(errno) << endl;
 		goto free_context;
 	}
+
+	send_cq = ibv_create_cq(context, 0x10, nullptr, nullptr, 0);
+	if (!send_cq)
+	{
+		cerr << "ibv_create_cq - send - failed: " << strerror(errno) << endl;
+		goto free_pd;
+	}
+
+	send_qp = create_qp_for_send(qp_init_attr, pd, send_cq);
+	if (!send_qp)
+	{
+		cerr << "ibv_create_qp failed: " << strerror(errno) << endl;
+		goto free_send_cq;
+	}
+
+
+	memset(&qp_attr, 0, sizeof(qp_attr));
+
+	qp_attr.qp_state   = ibv_qp_state::IBV_QPS_INIT;
+	qp_attr.port_num   = 1;
+	qp_attr.pkey_index = 0;
+	qp_attr.qp_access_flags = IBV_ACCESS_LOCAL_WRITE |
+	                          IBV_ACCESS_REMOTE_WRITE | 
+	                          IBV_ACCESS_REMOTE_READ;
+
+	// move both QPs in the INIT state, using ibv_modify_qp 
+	ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
+	if (ret != 0)
+	{
+		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;
+		goto free_send_qp;
+	}
+
+    send_mr = ibv_reg_mr(pd, data_send, sizeof(data_send), IBV_ACCESS_LOCAL_WRITE | 
+	             IBV_ACCESS_REMOTE_WRITE | 
+	             IBV_ACCESS_REMOTE_READ);
+	if (!send_mr)
+	{
+		cerr << "ibv_reg_mr failed: " << strerror(errno) << endl;
+		goto free_send_qp;
+	}
+
+	local_rdma.send_qp_num = send_qp->qp_num;
 
 
     // Create socket
@@ -110,10 +176,9 @@ int main() {
 
     // Send a message to the server
     cout << "> Send RDMA device info to MASTER" << endl;
-    if (send(clientSocket, message, strlen(message), 0) == -1) {
+    if (send(clientSocket, &local_rdma, sizeof(local_rdma), 0) == -1) {
         perror("Message sending failed");
     }
-
 
     // Read from server where can I send some data
     char buffer[BUFFER_SIZE];
@@ -153,7 +218,14 @@ int main() {
         }
     }
 
+free_send_qp:
+	ibv_destroy_qp(send_qp);
 
+free_send_cq:
+	ibv_destroy_cq(send_cq);
+
+free_pd:
+	ibv_dealloc_pd(pd);
     
 free_context:
 	ibv_close_device(context);
