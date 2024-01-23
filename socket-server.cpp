@@ -203,7 +203,6 @@ int main() {
 
 	local_rdma.send_qp_num = send_qp->qp_num;
 
-
     std::thread serverThread(acceptConnections);
 
     std::thread rdma_communication_thread(rdma_communication);

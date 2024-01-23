@@ -48,7 +48,7 @@ bool startsWith(const char* fullString, const char* prefix) {
 }
 
 
-void set_gid(struct ibv_context *context, struct ibv_port_attr &port_attr, struct device_info *local) {
+void set_gid(struct ibv_context *context, struct ibv_port_attr &port_attr, struct device_info *local, uint32_t &gidIndex) {
     int port = 1;
 	struct ibv_gid_entry gidEntries[255];
 
@@ -72,6 +72,7 @@ void set_gid(struct ibv_context *context, struct ibv_port_attr &port_attr, struc
 
 		if (startsWith(interface_id + strlen("::ffff:"), "192.168"))
 		{
+			gidIndex = entry.gid_index;
 			memcpy(&local->gid, &entry.gid, sizeof(local->gid));
 			break;
 		}
