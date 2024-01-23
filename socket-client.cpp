@@ -18,6 +18,42 @@ struct device_info
 	uint32_t send_qp_num;
 };
 
+bool startsWith(const char* fullString, const char* prefix) {
+    return strncmp(fullString, prefix, strlen(prefix)) == 0;
+}
+
+
+void set_gid(struct ibv_context *context, struct ibv_port_attr &port_attr, struct device_info *local) {
+    int port = 1;
+	struct ibv_gid_entry gidEntries[255];
+
+	ibv_query_port(context, port, &port_attr);
+	ibv_query_gid_table(context, gidEntries, port_attr.gid_tbl_len, 0);
+
+	for (auto &entry : gidEntries)
+	{
+		// we want only RoCEv2
+		if (entry.gid_type != IBV_GID_TYPE_ROCE_V2)
+			continue;
+
+		in6_addr addr;
+		memcpy(&addr, &entry.gid.global, sizeof(addr));
+		
+		char interface_id[INET6_ADDRSTRLEN];
+		inet_ntop(AF_INET6, &addr, interface_id, INET6_ADDRSTRLEN);
+
+		uint32_t ip;
+		inet_pton(AF_INET, interface_id + strlen("::ffff:"), &ip);
+
+		if (startsWith(interface_id + strlen("::ffff:"), "192.168"))
+		{
+			memcpy(&local->gid, &entry.gid, sizeof(local->gid));
+			break;
+		}
+	}
+
+}
+
 struct ibv_device** get_rxe_device() {
 	int num_devices;
 	struct ibv_device** dev_list = ibv_get_device_list(&num_devices);
@@ -39,9 +75,13 @@ int main() {
 
 
     // ==== RDMA variables ====
+    struct device_info local_rdma, server_rdma;
     struct ibv_device** dev_list = get_rxe_device();
 	struct ibv_context *context = ibv_open_device(dev_list[0]);
 	struct ibv_pd *pd = ibv_alloc_pd(context);
+    struct ibv_port_attr port_attr;
+
+    set_gid(context, port_attr, &local_rdma);
 	
     if (!pd)
 	{
