@@ -7,8 +7,8 @@
         "request": "launch",
         "program": "${workspaceFolder}/${fileBasenameNoExtension}.exe",
         "args": [
-            "--src_ip=192.168.0.232",
-            "--dst_ip=192.168.0.149",
+            "--src_ip=192.168.1.132",
+            "--dst_ip=192.168.1.134",
         ],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
