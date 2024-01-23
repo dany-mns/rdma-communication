@@ -6,46 +6,14 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <list>
-#include <fcntl.h> 
 #include <infiniband/verbs.h>
+#include "common.h"
 using namespace std;
 
-const int PORT = 8080;
 const int BACKLOG = 5;
-const int BUFFER_SIZE = 1024;
 list<int> clients;
 
-struct device_info
-{
-	union ibv_gid gid;
-	uint32_t send_qp_num;
-};
-
-bool clientSocketExist(std::list<int> clients, int currentSocket) {
-    for(const int& client : clients) {
-        if(client == currentSocket) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-int set_socket_non_blocking(int socket) {
-    int flags = fcntl(socket, F_GETFL, 0);
-    if (flags == -1) {
-        perror("fcntl F_GETFL failed");
-        return -1;
-    }
-
-    if (fcntl(socket, F_SETFL, flags | O_NONBLOCK) == -1) {
-        perror("fcntl F_SETFL failed");
-        return -1;
-    }
-
-    return 0;
-}
+struct device_info local_rdma;
 
 void handleClient(int clientSocket) {
     struct device_info client_rdma;
@@ -60,14 +28,12 @@ void handleClient(int clientSocket) {
         return;
     } else {
         // Null-terminate the received data to treat it as a string
-        cout << "> Receive RDMA device info from NODE." << endl;
-        cout << "VEEEEEE " << client_rdma.gid.global.interface_id << endl;
+        cout << "> Receive RDMA device info from NODE. QP: " << client_rdma.send_qp_num << ", intf: " << client_rdma.gid.global.interface_id <<  endl;
 
         // std::cout << "Received message from client (Socket " << clientSocket << "): " << buffer << std::endl;
         
-        cout << "< Send RDMA device info to NODE" << endl;
-        const char* responseMessage = "[SERVER] RDMA DEVICE INFO";
-        ssize_t bytesSent = send(clientSocket, responseMessage, strlen(responseMessage), 0);
+        cout << "> Send RDMA device info to NODE. QP: " << local_rdma.send_qp_num << endl;
+        ssize_t bytesSent = send(clientSocket, &local_rdma, sizeof(local_rdma), 0);
 
         if (bytesSent == -1) {
             perror("Error while sending data");
@@ -172,6 +138,72 @@ void rdma_communication() {
 }
 
 int main() {
+
+    // ==== RDMA variables ====
+    struct ibv_device** dev_list = get_rxe_device();
+	struct ibv_context *context = ibv_open_device(dev_list[0]);
+	struct ibv_pd *pd = ibv_alloc_pd(context);
+    struct ibv_qp_init_attr qp_init_attr;
+    struct ibv_port_attr port_attr;
+    struct ibv_qp *send_qp;
+    struct ibv_cq *send_cq;
+    int ret;
+    struct ibv_qp_attr qp_attr;
+    struct ibv_mr *send_mr;
+    char data_send[100];
+
+    set_gid(context, port_attr, &local_rdma);
+	
+    if (!pd)
+	{
+		cerr << "ibv_alloc_pd failed: " << strerror(errno) << endl;
+		exit(1);
+	}
+
+	send_cq = ibv_create_cq(context, 0x10, nullptr, nullptr, 0);
+	if (!send_cq)
+	{
+		cerr << "ibv_create_cq - send - failed: " << strerror(errno) << endl;
+		exit(1);
+	}
+
+	send_qp = create_qp_for_send(qp_init_attr, pd, send_cq);
+	if (!send_qp)
+	{
+		cerr << "ibv_create_qp failed: " << strerror(errno) << endl;
+		exit(1);
+	}
+
+
+	memset(&qp_attr, 0, sizeof(qp_attr));
+
+	qp_attr.qp_state   = ibv_qp_state::IBV_QPS_INIT;
+	qp_attr.port_num   = 1;
+	qp_attr.pkey_index = 0;
+	qp_attr.qp_access_flags = IBV_ACCESS_LOCAL_WRITE |
+	                          IBV_ACCESS_REMOTE_WRITE | 
+	                          IBV_ACCESS_REMOTE_READ;
+
+	// move both QPs in the INIT state, using ibv_modify_qp 
+	ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS);
+	if (ret != 0)
+	{
+		cerr << "ibv_modify_qp - INIT - failed: " << strerror(ret) << endl;
+		exit(1);
+	}
+
+    send_mr = ibv_reg_mr(pd, data_send, sizeof(data_send), IBV_ACCESS_LOCAL_WRITE | 
+	             IBV_ACCESS_REMOTE_WRITE | 
+	             IBV_ACCESS_REMOTE_READ);
+	if (!send_mr)
+	{
+		cerr << "ibv_reg_mr failed: " << strerror(errno) << endl;
+		exit(1);
+	}
+
+	local_rdma.send_qp_num = send_qp->qp_num;
+
+
     std::thread serverThread(acceptConnections);
 
     std::thread rdma_communication_thread(rdma_communication);
