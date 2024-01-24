@@ -133,6 +133,7 @@ void acceptConnections() {
     if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
         perror("Binding failed");
         close(serverSocket);
+        exit(1);
         return;
     }
 
