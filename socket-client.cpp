@@ -101,6 +101,43 @@ int main() {
 	qp_attr.ah_attr.src_path_bits = 0;
 	qp_attr.ah_attr.port_num      = 1;
 
+    // ====== Create socket =======
+    if ((clientSocket = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    // Set up server address structure
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(PORT);
+    serverAddr.sin_addr.s_addr = inet_addr(SERVER_IP);
+
+    // Connect to the server
+    if (connect(clientSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+        perror("Connection failed");
+        close(clientSocket);
+        return 1;
+    }
+
+    // Send a message to the server
+    cout << "> Send RDMA device info to MASTER. QP: " << local_rdma.send_qp_num << ", intf: " << local_rdma.gid.global.interface_id << endl;
+    if (send(clientSocket, &local_rdma, sizeof(local_rdma), 0) == -1) {
+        perror("Message sending failed");
+    }
+
+    bytesRead = recv(clientSocket, &server_rdma, sizeof(server_rdma), 0);
+
+    if (bytesRead == -1) {
+        perror("Error while receiving data");
+    } else if (bytesRead == 0) {
+        cout << "Server disconnected." << endl;
+    } else {
+        // Null-terminate the received data to treat it as a string
+        cout << "> Receive RDMA device info from MASTER. QP: " << server_rdma.send_qp_num << ", intf: " << server_rdma.gid.global.interface_id << endl;
+    }
+
+
+	// ==== RMDA INIT ====
 	memcpy(&qp_attr.ah_attr.grh.dgid, &server_rdma.gid, sizeof(server_rdma.gid));
 
 	qp_attr.ah_attr.grh.flow_label    = 0;
@@ -156,41 +193,7 @@ int main() {
 	wr_send.num_sge    = 1;
 	wr_send.opcode     = IBV_WR_SEND;
 	wr_send.send_flags = IBV_SEND_SIGNALED;
-
-    // ====== Create socket =======
-    if ((clientSocket = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        perror("Socket creation failed");
-        return 1;
-    }
-
-    // Set up server address structure
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(PORT);
-    serverAddr.sin_addr.s_addr = inet_addr(SERVER_IP);
-
-    // Connect to the server
-    if (connect(clientSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
-        perror("Connection failed");
-        close(clientSocket);
-        return 1;
-    }
-
-    // Send a message to the server
-    cout << "> Send RDMA device info to MASTER" << endl;
-    if (send(clientSocket, &local_rdma, sizeof(local_rdma), 0) == -1) {
-        perror("Message sending failed");
-    }
-
-    bytesRead = recv(clientSocket, &server_rdma, sizeof(server_rdma), 0);
-
-    if (bytesRead == -1) {
-        perror("Error while receiving data");
-    } else if (bytesRead == 0) {
-        cout << "Server disconnected." << endl;
-    } else {
-        // Null-terminate the received data to treat it as a string
-        cout << "> Receive RDMA device info from MASTER. QP: " << server_rdma.send_qp_num << ", intf: " << server_rdma.gid.global.interface_id << endl;
-    }
+	// ==== RMDA INIT ====
 
     char buffer[BUFFER_SIZE];
     while(true) {

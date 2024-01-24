@@ -132,6 +132,8 @@ void cleanClientList() {
 void rdma_communication() {
     cout << "START RDMA COMMUNICATION" << endl;
     char data_send[100];
+    int previous_client_socket = -1;
+    int ret;
     while(true) {
         for(const auto &client : clients) {
             cout << "> Unlock client socket: " << client.socket_fd << " to send data" << endl;
@@ -172,9 +174,12 @@ void rdma_communication() {
             qp_attr.dest_qp_num  = client.rdma_info.send_qp_num;
 
             // move the send QP into the RTR state, using ibv_modify_qp
-            int ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_AV |
-                                IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
-                                IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+            if(previous_client_socket != client.socket_fd) {
+                ret = ibv_modify_qp(send_qp, &qp_attr, IBV_QP_STATE | IBV_QP_AV |
+                                    IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                                    IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
+                previous_client_socket = client.socket_fd;
+            }
 
             if (ret != 0)
             {
@@ -206,10 +211,12 @@ void rdma_communication() {
 
             cout << "Pooling for data..." << endl;
             ret = 0;
+            int number_of_retries = 0
             do
             {
                 ret = ibv_poll_cq(send_cq, 1, &wc);
-            } while (ret == 0);
+                number_of_retries++;
+            } while (ret == 0 && number_of_retries < 100);
 
             if (wc.status != ibv_wc_status::IBV_WC_SUCCESS)
             {
